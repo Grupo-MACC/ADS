@@ -24,6 +24,17 @@ ENV DB_USER=admin
 ENV DB_PASSWORD=maccadmin
 ENV RDS_PORT=3306
 
+# Consul Service Discovery (HTTPS)
+ENV CONSUL_HOST=10.1.11.40
+ENV CONSUL_PORT=8501
+ENV CONSUL_SCHEME=https
+
+# Certificados TLS (el chassis hace verify=False, pero se pueden usar)
+ENV CONSUL_CA_FILE=/certs/ca.pem
+
+# Crear directorio para certificados
+RUN mkdir -p /certs
+
 # Crear directorio para el modelo
 RUN mkdir -p /app/models
 
