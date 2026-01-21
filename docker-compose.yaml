@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  ads-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ads-server
+    ports:
+      - "8083:8080"
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      - LOG_LEVEL=INFO
+      - MODEL_PATH=/app/models/isolation_forest_model_new.joblib
+      - ATTACK_THRESHOLD=0.5
+      # Base de datos (chassis resuelve RDS_HOST via Consul)
+      # RDS_HOST se obtiene automáticamente del servicio "rds" en Consul
+      - RDS_PORT=3306
+      - DB_NAME=ads_db
+      - DB_USER=admin
+      - DB_PASSWORD=maccadmin
+      # Respuesta automática a ataques
+      - MERGER_URL=${MERGER_URL:-http://merger:8082}
+      - AUTO_DEREGISTER_ENABLED=${AUTO_DEREGISTER_ENABLED:-true}
+      - AUTO_DEREGISTER_THRESHOLD=${AUTO_DEREGISTER_THRESHOLD:-0.75}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
