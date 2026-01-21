@@ -28,7 +28,7 @@ services:
       - DB_USER=admin
       - DB_PASSWORD=maccadmin
       # Respuesta automática a ataques
-      - MERGER_URL=${MERGER_URL:-http://merger:8082}
+      - MERGER_URL=${MERGER_URL:-http://10.1.11.40:8082}
       - AUTO_DEREGISTER_ENABLED=${AUTO_DEREGISTER_ENABLED:-true}
       - AUTO_DEREGISTER_THRESHOLD=${AUTO_DEREGISTER_THRESHOLD:-0.75}
     healthcheck:
