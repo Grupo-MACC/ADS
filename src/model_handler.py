@@ -225,14 +225,33 @@ class ModelHandler:
             # SIEMPRE calcular heurísticas (patrón específico Consul Poisoning)
             heuristic_result = self._detect_consul_poisoning_pattern(window_data)
             
+            # IMPORTANTE: Si la heurística detecta tráfico normal espaciado,
+            # NO consultar el modelo ML (evita falsos positivos)
+            if heuristic_result.get('indicators') == ['spaced_normal_traffic']:
+                logger.info("Heurística override: tráfico normal espaciado, ignorando modelo ML")
+                return heuristic_result
+            
             if self.model is not None and self.is_loaded:
                 model_result = self._predict_with_model(window_data)
                 
-                # Combinar: tomar el máximo score
-                combined_score = max(
-                    model_result['attack_probability'],
-                    heuristic_result['attack_probability']
-                )
+                # Combinar: Si la heurística detecta ataque, usar su score
+                # Si no, usar el máximo entre modelo y heurística
+                if len(heuristic_result.get('indicators', [])) >= 2:
+                    # Heurística tiene indicadores fuertes, darle prioridad
+                    combined_score = max(
+                        model_result['attack_probability'],
+                        heuristic_result['attack_probability']
+                    )
+                else:
+                    # Sin indicadores fuertes de heurística, confiar más en modelo
+                    # pero ajustar a la baja si heurística dice normal
+                    if heuristic_result['attack_probability'] < 0.3:
+                        combined_score = min(model_result['attack_probability'] * 0.5, 0.4)
+                    else:
+                        combined_score = max(
+                            model_result['attack_probability'],
+                            heuristic_result['attack_probability']
+                        )
                 
                 return {
                     'attack_detected': combined_score >= self.attack_threshold,
@@ -326,6 +345,10 @@ class ModelHandler:
         - conn_count_10s: ~4 para ataques (media), ~1.25 para normal
         - recon_pattern_score: ~0.81 para ataques, ~0.28 para normal
         - burst_score: ~1.0 para ataques (muchas conexiones rápidas)
+        
+        IMPORTANTE: Para evitar falsos positivos, requerimos:
+        - O burst_score alto (conexiones muy rápidas)
+        - O muchas conexiones + patrón de reconocimiento
         """
         indicators = []
         
@@ -341,10 +364,40 @@ class ModelHandler:
                                           window_data.get('burst_score', 0))
         burst_score_mean = window_data.get('burst_score_mean', 0)
         
-        # Features adicionales
+        # Features adicionales - tiempo entre conexiones
         time_since_last_max = window_data.get('time_since_last_conn_max', float('inf'))
         time_since_last_min = window_data.get('time_since_last_conn_min', 
                                                window_data.get('time_since_last_conn', float('inf')))
+        time_since_last_mean = window_data.get('time_since_last_conn_mean', float('inf'))
+        
+        # Heuristic intensity del burst
+        burst_intensity = window_data.get('burst_intensity', 0)
+        
+        # =========================================
+        # DETECTOR DE FALSOS POSITIVOS
+        # =========================================
+        # Si las conexiones están MUY espaciadas (> 5s entre ellas en promedio),
+        # NO es un ataque de Consul Poisoning (que hace 6 conexiones en 2s)
+        
+        is_spaced_traffic = False
+        if time_since_last_mean is not None and time_since_last_mean > 5.0:
+            is_spaced_traffic = True
+            logger.debug(f"Tráfico espaciado detectado: time_since_last_mean={time_since_last_mean}")
+        
+        # Si burst_score es muy bajo y las conexiones están espaciadas, NO es ataque
+        # PERO: Si hay muchas conexiones (>=4), es sospechoso aunque el burst_score sea bajo
+        # (puede pasar si Zeek loguea con delay)
+        if burst_score_max < 0.1 and is_spaced_traffic and n_connections < 4:
+            logger.info(f"Tráfico normal: burst_score={burst_score_max}, espaciado={is_spaced_traffic}, conns={n_connections}")
+            return {
+                'attack_detected': False,
+                'attack_probability': 0.1,
+                'attack_score': 0.1,
+                'confidence': 0.8,
+                'method': 'heuristic',
+                'indicators': ['spaced_normal_traffic'],
+                'indicators_triggered': 0
+            }
         
         # =========================================
         # Indicadores del patrón Consul Poisoning
@@ -356,7 +409,7 @@ class ModelHandler:
             indicators.append(('high_burst', 0.35))
         elif conn_count_10s_max >= 4:
             indicators.append(('medium_burst', 0.25))
-        elif conn_count_10s_max >= 3:
+        elif conn_count_10s_max >= 3 and burst_score_max > 0.3:  # Solo si hay burst
             indicators.append(('low_burst', 0.15))
         
         # 2. PATRÓN DE RECONOCIMIENTO alto
@@ -365,33 +418,45 @@ class ModelHandler:
             indicators.append(('high_recon', 0.30))
         elif recon_score_max >= 0.5:
             indicators.append(('medium_recon', 0.20))
-        elif recon_score_max >= 0.3:
+        elif recon_score_max >= 0.3 and burst_score_max > 0.3:  # Solo si hay burst
             indicators.append(('low_recon', 0.10))
         
-        # 3. BURST SCORE alto (conexiones muy rápidas)
+        # 3. BURST SCORE alto (conexiones muy rápidas) - MUY IMPORTANTE
         if burst_score_max >= 0.8:
-            indicators.append(('high_burst_score', 0.20))
+            indicators.append(('high_burst_score', 0.25))
         elif burst_score_max >= 0.5:
-            indicators.append(('medium_burst_score', 0.10))
+            indicators.append(('medium_burst_score', 0.15))
+        elif burst_score_max >= 0.3:
+            indicators.append(('low_burst_score', 0.10))
         
         # 4. CONEXIONES MUY CERCANAS (< 1 segundo entre ellas)
         if time_since_last_min is not None and time_since_last_min < 1.0:
-            indicators.append(('rapid_connections', 0.15))
-        elif time_since_last_min is not None and time_since_last_min < 5.0:
-            indicators.append(('quick_connections', 0.05))
+            indicators.append(('rapid_connections', 0.20))
+        elif time_since_last_min is not None and time_since_last_min < 2.0:
+            indicators.append(('quick_connections', 0.10))
         
         # 5. MUCHAS CONEXIONES en la ventana (ataque genera 6+ en 2s)
+        # Cuenta aunque burst_score sea bajo (Zeek puede tener delay)
         if n_connections >= 6:
-            indicators.append(('many_connections', 0.15))
+            indicators.append(('many_connections', 0.25))
+        elif n_connections >= 5:
+            indicators.append(('suspicious_conn_count', 0.20))
         elif n_connections >= 4:
-            indicators.append(('some_connections', 0.05))
+            indicators.append(('elevated_conn_count', 0.15))
         
         # Calcular score total
         total_score = sum(weight for _, weight in indicators)
         attack_score = min(total_score, 1.0)
         
-        # Umbral de confianza basado en número de indicadores
-        confidence = min(len(indicators) * 0.2, 1.0)
+        # Umbral de confianza:
+        # - Si el score es alto (>= 0.7), confianza alta también
+        # - Si no, basado en número de indicadores
+        if attack_score >= 0.7:
+            confidence = 0.8  # Alta confianza para ataques claros
+        elif attack_score >= 0.5:
+            confidence = 0.6
+        else:
+            confidence = min(len(indicators) * 0.2, 0.4)
         
         attack_detected = attack_score >= self.attack_threshold
         
