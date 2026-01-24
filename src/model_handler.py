@@ -319,7 +319,44 @@ class ModelHandler:
         model_class = type(self.model).__name__
         logger.info(f"Modelo detectado: {model_class}, shape input: {X.shape}")
         
-        if model_class == 'IsolationForest':
+        # Si es un Pipeline, necesitamos manejarlo diferente
+        if model_class == 'Pipeline':
+            # El Pipeline tiene scaler + IsolationForest
+            # Usamos score_samples del pipeline directamente
+            if hasattr(self.model, 'score_samples'):
+                anomaly_score_raw = float(-self.model.score_samples(X)[0])
+                logger.info(f"Pipeline score_samples (negado): {anomaly_score_raw}")
+            elif hasattr(self.model, 'decision_function'):
+                anomaly_score_raw = float(-self.model.decision_function(X)[0])
+                logger.info(f"Pipeline decision_function (negado): {anomaly_score_raw}")
+            else:
+                # Intentar acceder al último paso del pipeline (IsolationForest)
+                try:
+                    # Primero transformamos los datos con los pasos previos
+                    X_transformed = X
+                    for name, step in self.model.steps[:-1]:
+                        X_transformed = step.transform(X_transformed)
+                        logger.info(f"Pipeline paso '{name}' aplicado, shape: {X_transformed.shape}")
+                    
+                    # Ahora usamos el último paso (IsolationForest)
+                    final_step = self.model.steps[-1][1]
+                    logger.info(f"Pipeline último paso: {type(final_step).__name__}")
+                    
+                    if hasattr(final_step, 'score_samples'):
+                        anomaly_score_raw = float(-final_step.score_samples(X_transformed)[0])
+                        logger.info(f"IsolationForest score_samples (negado): {anomaly_score_raw}")
+                    elif hasattr(final_step, 'decision_function'):
+                        anomaly_score_raw = float(-final_step.decision_function(X_transformed)[0])
+                        logger.info(f"IsolationForest decision_function (negado): {anomaly_score_raw}")
+                    else:
+                        prediction = final_step.predict(X_transformed)[0]
+                        anomaly_score_raw = 1.0 if prediction == -1 else 0.0
+                        logger.info(f"IsolationForest predict: {prediction}")
+                except Exception as e:
+                    logger.error(f"Error accediendo al Pipeline: {e}")
+                    anomaly_score_raw = 0.5
+        
+        elif model_class == 'IsolationForest':
             # Isolation Forest: usar score_samples (como en el entrenamiento)
             # -score_samples da valores entre 0.35 y 0.8 donde más alto = más anómalo
             if hasattr(self.model, 'score_samples'):
