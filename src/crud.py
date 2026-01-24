@@ -15,23 +15,24 @@ from models import Prediction
 logger = logging.getLogger("ads-server.crud")
 
 
-def normalize_score(raw_score: float, min_val: float = 0.0, max_val: float = 1.0) -> float:
+def normalize_score(raw_score: float, min_val: float = 0.35, max_val: float = 0.8) -> float:
     """
-    Normaliza el anomaly score al rango [0, 1]
+    Normaliza el anomaly score del rango [0.35, 0.8] a [0, 1]
     
     Args:
-        raw_score: Score del modelo
-        min_val: Valor mínimo esperado
-        max_val: Valor máximo esperado
+        raw_score: Score del modelo (típicamente entre 0.35 y 0.8)
+        min_val: Valor mínimo esperado (default 0.35)
+        max_val: Valor máximo esperado (default 0.8)
     
     Returns:
         Score normalizado entre 0 y 1
     """
     if max_val == min_val:
         return 0.5
-    clamped = max(min_val, min(max_val, raw_score))
-    normalized = (clamped - min_val) / (max_val - min_val)
-    return round(normalized, 4)
+    # Normalizar: (valor - min) / (max - min)
+    normalized = (raw_score - min_val) / (max_val - min_val)
+    # Clampear entre 0 y 1
+    return round(max(0.0, min(1.0, normalized)), 4)
 
 
 async def save_prediction(
@@ -39,8 +40,8 @@ async def save_prediction(
     source_ip: str,
     timestamp: float,
     anomaly_score_raw: float,
-    attack_detected: bool,
-    confidence: float = None,
+    anomaly_score_normalized: float,
+    is_attack: int,
     method: str = None,
     n_connections: int = None,
     window_data: Dict = None
@@ -52,10 +53,10 @@ async def save_prediction(
         db: Sesión de base de datos
         source_ip: IP origen de la conexión
         timestamp: Timestamp Unix de la ventana
-        anomaly_score_raw: Score del modelo sin normalizar
-        attack_detected: Si se detectó ataque
-        confidence: Confianza de la predicción
-        method: Método usado ('model', 'heuristic' o 'combined')
+        anomaly_score_raw: Score crudo del modelo
+        anomaly_score_normalized: Score normalizado (0-1) desde rango [0.35, 0.8]
+        is_attack: 1 si es ataque (anomaly_score_raw > 0.65), 0 si no
+        method: Método usado ('model')
         n_connections: Número de conexiones en la ventana
         window_data: Diccionario completo de la ventana
     
@@ -63,9 +64,6 @@ async def save_prediction(
         Prediction creada o None si hay error
     """
     try:
-        # Normalizar score
-        anomaly_score_normalized = normalize_score(anomaly_score_raw)
-        
         # Convertir timestamp a datetime
         ts_datetime = datetime.fromtimestamp(timestamp) if timestamp else datetime.utcnow()
         
@@ -75,8 +73,7 @@ async def save_prediction(
             source_ip=source_ip or "unknown",
             anomaly_score=anomaly_score_normalized,
             anomaly_score_raw=anomaly_score_raw,
-            attack_detected=1 if attack_detected else 0,
-            confidence=confidence,
+            attack_detected=is_attack,
             method=method,
             n_connections=n_connections,
             window_data=window_data
@@ -86,7 +83,7 @@ async def save_prediction(
         await db.commit()
         await db.refresh(prediction)
         
-        logger.debug(f"Predicción guardada: IP={source_ip}, score={anomaly_score_normalized:.3f}")
+        logger.debug(f"Predicción guardada: IP={source_ip}, raw={anomaly_score_raw:.4f}, normalized={anomaly_score_normalized:.4f}, is_attack={is_attack}")
         return prediction
         
     except Exception as e:
@@ -121,8 +118,7 @@ async def get_recent_predictions(db: AsyncSession, limit: int = 100) -> List[Dic
                 "source_ip": p.source_ip,
                 "anomaly_score": p.anomaly_score,
                 "anomaly_score_raw": p.anomaly_score_raw,
-                "attack_detected": bool(p.attack_detected),
-                "confidence": p.confidence,
+                "is_attack": p.attack_detected,
                 "method": p.method,
                 "n_connections": p.n_connections
             }
@@ -153,7 +149,8 @@ async def get_attacks_by_ip(db: AsyncSession, source_ip: str, limit: int = 50) -
                 "id": p.id,
                 "timestamp": p.timestamp.isoformat(),
                 "anomaly_score": p.anomaly_score,
-                "confidence": p.confidence,
+                "anomaly_score_raw": p.anomaly_score_raw,
+                "is_attack": p.attack_detected,
                 "method": p.method,
                 "n_connections": p.n_connections
             }

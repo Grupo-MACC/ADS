@@ -30,7 +30,7 @@ services:
       # Respuesta automática a ataques
       - MERGER_URL=${MERGER_URL:-http://10.1.11.40:8082}
       - AUTO_DEREGISTER_ENABLED=${AUTO_DEREGISTER_ENABLED:-true}
-      - AUTO_DEREGISTER_THRESHOLD=${AUTO_DEREGISTER_THRESHOLD:-0.75}
+      - AUTO_DEREGISTER_THRESHOLD=${AUTO_DEREGISTER_THRESHOLD:-0.65}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s

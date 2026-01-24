@@ -19,9 +19,8 @@ class Prediction(BaseModel):
     source_ip = Column(String(45), nullable=False, index=True)  # Soporta IPv6
     anomaly_score = Column(Float, nullable=False)  # Score normalizado 0-1
     anomaly_score_raw = Column(Float, nullable=False)  # Score original del modelo
-    attack_detected = Column(Integer, nullable=False, index=True)  # 0 o 1
-    confidence = Column(Float, nullable=True)
-    method = Column(String(50), nullable=True)  # 'model', 'heuristic' o 'combined'
+    attack_detected = Column(Integer, nullable=False, index=True)  # 0 o 1 (1 si anomaly_score_raw > 0.65)
+    method = Column(String(50), nullable=True)  # 'model'
     n_connections = Column(Integer, nullable=True)
     window_data = Column(JSON, nullable=True)  # Window completa como JSON
     created_at = Column(DateTime, default=datetime.utcnow)

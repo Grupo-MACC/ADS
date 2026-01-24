@@ -75,7 +75,7 @@ db_connected = False
 # FUNCIONES DE RESPUESTA AUTOMÁTICA
 # ============================================
 
-async def trigger_auto_deregister(ip: str, confidence: float, attack_score: float):
+async def trigger_auto_deregister(ip: str, anomaly_score: float, attack_score: float):
     """
     Dispara el desregistro automático de servicios de una IP atacante.
     """
@@ -83,11 +83,11 @@ async def trigger_auto_deregister(ip: str, confidence: float, attack_score: floa
         logger.debug(f"Auto-deregister deshabilitado, ignorando IP {ip}")
         return
     
-    if confidence < AUTO_DEREGISTER_THRESHOLD:
-        logger.info(f"Confianza {confidence:.2%} < umbral {AUTO_DEREGISTER_THRESHOLD:.2%}, no se desregistra IP {ip}")
+    if anomaly_score < AUTO_DEREGISTER_THRESHOLD:
+        logger.info(f"Score {anomaly_score:.2%} < umbral {AUTO_DEREGISTER_THRESHOLD:.2%}, no se desregistra IP {ip}")
         return
     
-    logger.warning(f"🚨 RESPUESTA AUTOMÁTICA: Confianza {confidence:.2%} >= {AUTO_DEREGISTER_THRESHOLD:.2%}")
+    logger.warning(f"🚨 RESPUESTA AUTOMÁTICA: Score {anomaly_score:.2%} >= {AUTO_DEREGISTER_THRESHOLD:.2%}")
     logger.warning(f"🎯 Iniciando desregistro de servicios de IP: {ip}")
     
     try:
@@ -101,7 +101,7 @@ async def trigger_auto_deregister(ip: str, confidence: float, attack_score: floa
                 history_entry = {
                     'timestamp': datetime.now().isoformat(),
                     'ip': ip,
-                    'confidence': confidence,
+                    'anomaly_score': anomaly_score,
                     'attack_score': attack_score,
                     'deregistered_count': deregistered_count,
                     'deregistered_services': result.get('deregistered_services', []),
@@ -115,7 +115,7 @@ async def trigger_auto_deregister(ip: str, confidence: float, attack_score: floa
                 DEREGISTER_HISTORY.append({
                     'timestamp': datetime.now().isoformat(),
                     'ip': ip,
-                    'confidence': confidence,
+                    'anomaly_score': anomaly_score,
                     'status': 'error',
                     'error': f"HTTP {response.status_code}"
                 })
@@ -125,7 +125,7 @@ async def trigger_auto_deregister(ip: str, confidence: float, attack_score: floa
         DEREGISTER_HISTORY.append({
             'timestamp': datetime.now().isoformat(),
             'ip': ip,
-            'confidence': confidence,
+            'anomaly_score': anomaly_score,
             'status': 'error',
             'error': str(e)
         })
@@ -144,15 +144,14 @@ class WindowData(BaseModel):
 
 class PredictionResponse(BaseModel):
     """Respuesta de predicción"""
-    attack_detected: bool
-    attack_probability: float
-    attack_score: float
-    confidence: float
+    is_attack: int
+    anomaly_score_raw: float
+    anomaly_score_normalized: float
+    attack_detected: bool  # Mantener por compatibilidad
     method: str
     ip: Optional[str] = None
     timestamp: str
     window_connections: Optional[int] = None
-    details: Optional[Dict] = None
 
 class BatchWindowData(BaseModel):
     """Múltiples ventanas para predicción en batch"""
@@ -212,7 +211,7 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️  No se pudo cargar modelo desde {MODEL_PATH}")
     else:
         logger.warning(f"⚠️  Modelo no encontrado en {MODEL_PATH}")
-        logger.info("Usando heurísticas para detección")
+        logger.error("No se puede realizar predicción sin modelo")
     
     # Configurar threshold
     model_handler.set_threshold(ATTACK_THRESHOLD)
@@ -271,33 +270,50 @@ async def predict(
         # Hacer predicción
         result = model_handler.predict(window)
         
+        # Extraer valores del resultado
+        anomaly_score_raw = result.get('anomaly_score_raw', 0.0)
+        anomaly_score_normalized = result.get('anomaly_score_normalized', 0.0)
+        is_attack = result.get('is_attack', 0)
+        
         # Crear respuesta
         response = PredictionResponse(
-            attack_detected=result['attack_detected'],
-            attack_probability=result['attack_probability'],
-            attack_score=result['attack_score'],
-            confidence=result['confidence'],
+            is_attack=is_attack,
+            anomaly_score_raw=anomaly_score_raw,
+            anomaly_score_normalized=anomaly_score_normalized,
+            attack_detected=bool(is_attack),
             method=result['method'],
             ip=ip,
             timestamp=datetime.now().isoformat(),
-            window_connections=window.get('n_connections'),
-            details={
-                'burst_intensity': window.get('burst_intensity', 0),
-                'connection_density': window.get('connection_density', 0),
-                'has_known_ja3': window.get('has_known_ja3', 1)
-            }
+            window_connections=window.get('n_connections')
         )
         
         # Guardar en historial local
         history_entry = {
             'timestamp': response.timestamp,
             'ip': ip,
-            'attack_detected': result['attack_detected'],
-            'attack_score': result['attack_score'],
+            'is_attack': is_attack,
+            'anomaly_score_raw': anomaly_score_raw,
+            'anomaly_score_normalized': anomaly_score_normalized,
             'method': result['method'],
             'n_connections': window.get('n_connections', 0)
         }
         PREDICTION_HISTORY.append(history_entry)
+        
+        # Loguear SIEMPRE (ataque o tráfico normal)
+        if is_attack:
+            logger.warning(
+                f"🚨 ATAQUE DETECTADO - IP: {ip}, "
+                f"anomaly_score_raw: {anomaly_score_raw:.4f}, "
+                f"anomaly_score_normalized: {anomaly_score_normalized:.4f}, "
+                f"is_attack: {is_attack}"
+            )
+        else:
+            logger.info(
+                f"✅ TRÁFICO NORMAL - IP: {ip}, "
+                f"anomaly_score_raw: {anomaly_score_raw:.4f}, "
+                f"anomaly_score_normalized: {anomaly_score_normalized:.4f}, "
+                f"is_attack: {is_attack}"
+            )
         
         # Guardar en RDS
         if db_connected:
@@ -305,35 +321,31 @@ async def predict(
                 db=db,
                 source_ip=ip,
                 timestamp=request_timestamp,
-                anomaly_score_raw=result['attack_score'],
-                attack_detected=result['attack_detected'],
-                confidence=result['confidence'],
+                anomaly_score_raw=anomaly_score_raw,
+                anomaly_score_normalized=anomaly_score_normalized,
+                is_attack=is_attack,
                 method=result['method'],
                 n_connections=window.get('n_connections'),
                 window_data=window
             )
         
-        # Si se detecta ataque, crear alerta
-        if result['attack_detected']:
+        # Si se detecta ataque, crear alerta y respuesta automática
+        if is_attack:
             alert = {
                 'timestamp': response.timestamp,
                 'ip': ip,
-                'attack_score': result['attack_score'],
-                'confidence': result['confidence'],
-                'n_connections': window.get('n_connections', 0),
-                'burst_intensity': window.get('burst_intensity', 0)
+                'anomaly_score_raw': anomaly_score_raw,
+                'anomaly_score_normalized': anomaly_score_normalized,
+                'n_connections': window.get('n_connections', 0)
             }
             ACTIVE_ALERTS.append(alert)
-            logger.warning(f"🚨 ATAQUE DETECTADO - IP: {ip}, Score: {result['attack_score']:.3f}, Confianza: {result['confidence']:.2%}")
             
             # RESPUESTA AUTOMÁTICA
             asyncio.create_task(trigger_auto_deregister(
                 ip=ip,
-                confidence=result['confidence'],
-                attack_score=result['attack_score']
+                anomaly_score=anomaly_score_raw,
+                attack_score=anomaly_score_raw
             ))
-        else:
-            logger.debug(f"✅ Normal - IP: {ip}, Score: {result['attack_score']:.3f}")
         
         return response
         
@@ -357,9 +369,10 @@ async def predict_batch(
             
             results.append({
                 'ip': ip,
+                'is_attack': result['is_attack'],
                 'attack_detected': result['attack_detected'],
-                'attack_score': result['attack_score'],
-                'confidence': result['confidence'],
+                'anomaly_score_raw': result['anomaly_score_raw'],
+                'anomaly_score_normalized': result['anomaly_score_normalized'],
                 'method': result['method']
             })
             
@@ -438,7 +451,7 @@ async def health():
     return {
         'status': 'healthy',
         'model_loaded': model_handler.is_loaded,
-        'model_type': model_handler.model_type or 'heuristic',
+        'model_type': model_handler.model_type or 'none',
         'rds_connected': db_connected,
         'timestamp': datetime.now().isoformat()
     }
