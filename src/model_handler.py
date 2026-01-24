@@ -170,9 +170,15 @@ class ModelHandler:
             Array numpy con shape (1, n_features)
         """
         features = []
+        missing_features = []
+        non_zero_features = []
         
         for feature_name in self.feature_names:
             value = window_data.get(feature_name, 0.0)
+            
+            # Rastrear features faltantes
+            if feature_name not in window_data:
+                missing_features.append(feature_name)
             
             # Manejar valores None o NaN
             if value is None or (isinstance(value, float) and np.isnan(value)):
@@ -184,7 +190,22 @@ class ModelHandler:
             except (ValueError, TypeError):
                 value = 0.0
             
+            # Rastrear features con valor
+            if value != 0.0:
+                non_zero_features.append((feature_name, value))
+            
             features.append(value)
+        
+        # LOGS DE DEBUG
+        logger.info(f"=== DEBUG prepare_input ===")
+        logger.info(f"Total features esperadas: {len(self.feature_names)}")
+        logger.info(f"Features en window_data: {len(window_data)}")
+        logger.info(f"Features FALTANTES: {len(missing_features)}")
+        if missing_features:
+            logger.info(f"Primeras 10 faltantes: {missing_features[:10]}")
+        logger.info(f"Features con valor != 0: {len(non_zero_features)}")
+        if non_zero_features:
+            logger.info(f"Primeras 10 con valor: {non_zero_features[:10]}")
         
         return np.array(features).reshape(1, -1)
     
@@ -221,6 +242,14 @@ class ModelHandler:
             - anomaly_score_normalized: float (0-1, normalizado desde rango 0.35-0.8)
             - method: str (model)
         """
+        logger.info("=" * 60)
+        logger.info("=== INICIO PREDICCIÓN ===")
+        logger.info(f"Modelo cargado: {self.is_loaded}")
+        logger.info(f"Tipo de modelo: {self.model_type}")
+        logger.info(f"Path del modelo: {self.model_path}")
+        if self.model:
+            logger.info(f"Clase del modelo: {type(self.model).__name__}")
+        
         try:
             if self.model is not None and self.is_loaded:
                 model_result = self._predict_with_model(window_data)
@@ -288,18 +317,24 @@ class ModelHandler:
         
         # Verificar tipo de modelo
         model_class = type(self.model).__name__
+        logger.info(f"Modelo detectado: {model_class}, shape input: {X.shape}")
         
         if model_class == 'IsolationForest':
-            # Isolation Forest: usar decision_function para score
-            # Más negativo = más anómalo
-            if hasattr(self.model, 'decision_function'):
-                score = float(self.model.decision_function(X)[0])
-                # Convertir a probabilidad (0-1): score negativo = mayor probabilidad de ataque
-                # El score típicamente va de -0.5 a 0.5, normalizamos con sigmoid
-                anomaly_score_raw = float(1 / (1 + np.exp(score * 5)))
+            # Isolation Forest: usar score_samples (como en el entrenamiento)
+            # -score_samples da valores entre 0.35 y 0.8 donde más alto = más anómalo
+            if hasattr(self.model, 'score_samples'):
+                # Usar -score_samples como en el entrenamiento
+                anomaly_score_raw = float(-self.model.score_samples(X)[0])
+                logger.info(f"score_samples (negado): {anomaly_score_raw}")
+            elif hasattr(self.model, 'decision_function'):
+                # Fallback a decision_function si no hay score_samples
+                # decision_function = -score_samples, así que negamos
+                anomaly_score_raw = float(-self.model.decision_function(X)[0])
+                logger.info(f"decision_function (negado): {anomaly_score_raw}")
             else:
                 prediction = self.model.predict(X)[0]
                 anomaly_score_raw = 1.0 if prediction == -1 else 0.0
+                logger.info(f"predict: {prediction} -> anomaly_score_raw: {anomaly_score_raw}")
         
         elif hasattr(self.model, 'predict_proba'):
             # Clasificadores con probabilidades
