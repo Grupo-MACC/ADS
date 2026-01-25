@@ -6,7 +6,7 @@ datasources:
     access: proxy
     uid: influxdb-pbl
     isDefault: true
-    url: http://host.docker.internal:8086
+    url: http://10.1.12.50:5000
     jsonData:
       version: Flux
       organization: my-org
