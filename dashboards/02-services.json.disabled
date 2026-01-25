@@ -1,0 +1,387 @@
+{
+  "uid": "pbl-services",
+  "title": "02 - Services",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "10s",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_SQL",
+        "type": "datasource",
+        "label": "SQL datasource",
+        "query": "mysql",
+        "current": {
+          "text": "-",
+          "value": "-"
+        },
+        "options": [],
+        "refresh": 1
+      },
+      {
+        "name": "bucket",
+        "type": "custom",
+        "label": "Agrupacion",
+        "query": "1m,5m,15m,1h,6h,1d",
+        "current": {
+          "text": "5m",
+          "value": "5m"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Metrica de negocio (MySQL)",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 5
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "<h3>Metrica de negocio (MySQL)</h3><p>Este dashboard lee KPIs de negocio desde MySQL usando <code>order_orders</code>.</p><p><b>Campos:</b> <code>creation_date</code>, <code>creation_status</code>, <code>manufacturing_status</code>, <code>delivery_status</code>.</p><p><b>Cancelaciones:</b> se detectan con <code>LIKE '%CANCEL%'</code> sobre los estados.</p>"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Pedidos (total)",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_SQL}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value\nFROM order_orders;"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "value",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "unit": "",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Creados",
+      "gridPos": {
+        "x": 6,
+        "y": 5,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_SQL}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value\nFROM order_orders\nWHERE $__timeFilter(creation_date);"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "value",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "unit": "",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Cancelados",
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_SQL}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT SUM(\n  CASE WHEN UPPER(creation_status) LIKE '%CANCEL%'\n        OR UPPER(manufacturing_status) LIKE '%CANCEL%'\n        OR UPPER(delivery_status) LIKE '%CANCEL%'\n       THEN 1 ELSE 0 END\n) AS value\nFROM order_orders\nWHERE $__timeFilter(creation_date);"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "value",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "unit": "",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Tasa cancelacion (%)",
+      "gridPos": {
+        "x": 18,
+        "y": 5,
+        "w": 6,
+        "h": 5
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_SQL}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  CASE WHEN COUNT(*)=0 THEN 0\n       ELSE ROUND(100.0 * SUM(\n         CASE WHEN UPPER(creation_status) LIKE '%CANCEL%'\n               OR UPPER(manufacturing_status) LIKE '%CANCEL%'\n               OR UPPER(delivery_status) LIKE '%CANCEL%'\n              THEN 1 ELSE 0 END\n       ) / COUNT(*), 2)\n  END AS value\nFROM order_orders\nWHERE $__timeFilter(creation_date);"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "value",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Pedidos creados (serie temporal)",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_SQL}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  $__timeGroupAlias(creation_date, '$bucket'),\n  COUNT(*) AS orders_created\nFROM order_orders\nWHERE $__timeFilter(creation_date)\nGROUP BY 1\nORDER BY 1;"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Pedidos cancelados (serie temporal)",
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_SQL}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  $__timeGroupAlias(creation_date, '$bucket'),\n  SUM(CASE WHEN UPPER(creation_status) LIKE '%CANCEL%'\n            OR UPPER(manufacturing_status) LIKE '%CANCEL%'\n            OR UPPER(delivery_status) LIKE '%CANCEL%'\n           THEN 1 ELSE 0 END) AS orders_cancelled\nFROM order_orders\nWHERE $__timeFilter(creation_date)\nGROUP BY 1\nORDER BY 1;"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Pedidos por estado",
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 10,
+        "h": 8
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_SQL}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT creation_status AS status, COUNT(*) AS n\nFROM order_orders\nWHERE $__timeFilter(creation_date)\nGROUP BY creation_status\nORDER BY n DESC;"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "groupWidth": 0.7,
+        "barWidth": 0.97
+      }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Ultimos pedidos",
+      "gridPos": {
+        "x": 10,
+        "y": 18,
+        "w": 14,
+        "h": 8
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "${DS_SQL}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  creation_date,\n  id,\n  client_id,\n  creation_status,\n  manufacturing_status,\n  delivery_status,\n  update_date\nFROM order_orders\nWHERE $__timeFilter(creation_date)\nORDER BY creation_date DESC\nLIMIT 50;"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      }
+    }
+  ]
+}

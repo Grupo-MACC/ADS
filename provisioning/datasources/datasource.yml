@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB (PBL)
+    type: influxdb
+    access: proxy
+    uid: influxdb-pbl
+    isDefault: true
+    url: http://host.docker.internal:8086
+    jsonData:
+      version: Flux
+      organization: my-org
+      defaultBucket: factory_monitoring
+    secureJsonData:
+      token: MY_CUSTOM_TOKEN_123456
